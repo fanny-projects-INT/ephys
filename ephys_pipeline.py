@@ -1,23 +1,32 @@
 from pathlib import Path
-from config import *
-from spikeinterface.sorters import get_default_sorter_params
-from functions.paths import build_paths
-from functions.compress import compress_recordings
-from functions.load import load_recordings
-from functions.preprocess import preprocess_recordings
-from functions.sort import run_kilosort4
-from functions.analyzer import build_sorting_analyzers
-from functions.bombcell import run_bombcell
-from functions.alf import export_alf
-
-
+from config import (
+    DATA_ROOT,
+    DB_PATH,
+    KS_PARAMS,
+    COMPRESS_KEEP_ORIGINAL,
+    KS_REMOVE_EXISTING_FOLDER,
+    ANALYZER_N_JOBS,
+    ANALYZER_CHUNK_DURATION,
+    EXPORT_N_JOBS,
+    EXPORT_CHUNK_DURATION,
+)
+from utils import (
+    build_paths,
+    compress_recordings,
+    load_recordings,
+    preprocess_recordings,
+    run_kilosort4,
+    build_sorting_analyzers,
+    run_bombcell,
+    export_alf,
+)
 
 # =========================================================
 # SESSSIONS TO PROCESS
 # =========================================================
 
 SESSION_LIST = [
-    "VF074test_2026_03_24",
+    "VF074v3_2026_03_24",
 ]
 
 # =========================================================
