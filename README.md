@@ -11,7 +11,8 @@ This pipeline runs the following steps for each session:
 3. Preprocess signals
 4. Run spike sorting (Kilosort4)
 5. Compute sorting analyzers
-6. Export results to ALF format (IBL compatible)
+6. Run Bombcell quality control
+7. Export results to ALF format (IBL compatible)
 
 ---
 
@@ -35,6 +36,9 @@ pip install -r requirements.txt
 
 ## Data structure
 
+At the beginning, only the `Rec/` folder is required.  
+All other folders (`KS/`, `sorting_analyzer/`, `bombcell/`, `alf/`) are created automatically by the pipeline.
+
 Expected structure:
 
 ```
@@ -47,14 +51,17 @@ DATA_ROOT/
         │       ├── *.lf.bin / *.lf.cbin
         │
         ├── KS/
-        ├── alf/
-        └── sorting_analyzer/
+        ├── sorting_analyzer/
+        ├── bombcell/
+        │   └── probe00/
+        └── alf/
 ```
 
 - Rec: raw SpikeGLX data  
-- KS: Kilosort outputs  
-- alf: exported ALF files  
-- sorting_analyzer: SpikeInterface analyzer outputs  
+- KS: Kilosort outputs (created automatically)  
+- sorting_analyzer: SpikeInterface analyzer outputs (created automatically)  
+- bombcell: Bombcell QC outputs (created automatically)  
+- alf: exported ALF files (created automatically)  
 
 ---
 
@@ -63,8 +70,6 @@ DATA_ROOT/
 Edit `main.py`:
 
 ```python
-DATA_ROOT = Path("F:/Data_Mice_IBL")
-
 SESSION_LIST = [
     "VF074_2026_03_24",
 ]
@@ -94,6 +99,9 @@ python main.py
 
 - build_sorting_analyzers  
   Compute waveforms, templates, amplitudes, metrics
+
+- run_bombcell  
+  Run Bombcell QC and classify units
 
 - export_alf  
   Export to ALF (IBL format)
