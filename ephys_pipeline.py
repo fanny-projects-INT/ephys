@@ -1,7 +1,6 @@
 from pathlib import Path
 from config import (
     DATA_ROOT,
-    DB_PATH,
     KS_PARAMS,
     COMPRESS_KEEP_ORIGINAL,
     KS_REMOVE_EXISTING_FOLDER,
