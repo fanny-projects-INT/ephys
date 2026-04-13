@@ -34,6 +34,22 @@ pip install -r requirements.txt
 
 ---
 
+## Configuration
+
+Create a `config.py` file from the template:
+
+```bash
+cp config_template.py config.py
+```
+
+Then edit it to match your environment:
+
+```python
+DATA_ROOT = Path("F:/Data_Mice_IBL")
+```
+
+---
+
 ## Data structure
 
 At the beginning, only the `Rec/` folder is required.  
