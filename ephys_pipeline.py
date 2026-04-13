@@ -33,7 +33,7 @@ SESSION_LIST = [
 # =========================================================
 def main():
     sessions = [
-        build_paths(session_name, data_root=DATA_ROOT, db_path=DB_PATH)
+        build_paths(session_name, data_root=DATA_ROOT)
         for session_name in SESSION_LIST
     ]
 

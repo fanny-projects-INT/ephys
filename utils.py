@@ -42,7 +42,7 @@ def compress_recordings(sess, keep_original=True):
     return sess
 
 
-def build_paths(session_name: str, data_root: Path, db_path: Path | None = None) -> dict:
+def build_paths(session_name: str, data_root: Path) -> dict:
     """
     Build all session paths and create output folders if needed.
     """
@@ -54,6 +54,7 @@ def build_paths(session_name: str, data_root: Path, db_path: Path | None = None)
     ks_root = base_folder / "KS"
     alf_root = base_folder / "alf"
     analyzer_root = base_folder / "sorting_analyzer"
+    bombcell_root = base_folder / "bombcell"
     shift_path = base_folder / "shift.txt"
 
     if not (rec_root / "probe00").is_dir():
@@ -70,10 +71,12 @@ def build_paths(session_name: str, data_root: Path, db_path: Path | None = None)
         ks_folder = ks_root / p
         alf_folder = alf_root / p
         analyzer_folder = analyzer_root / p
+        bombcell_folder = bombcell_root / p
 
         ks_folder.mkdir(parents=True, exist_ok=True)
         alf_folder.mkdir(parents=True, exist_ok=True)
         analyzer_folder.mkdir(parents=True, exist_ok=True)
+        bombcell_folder.mkdir(parents=True, exist_ok=True)
 
         probes[p] = {
             "probe": p,
@@ -82,6 +85,7 @@ def build_paths(session_name: str, data_root: Path, db_path: Path | None = None)
             "ks_folder": ks_folder,
             "alf_folder": alf_folder,
             "analyzer_folder": analyzer_folder,
+            "bombcell_folder": bombcell_folder,
             "recording_json": ks_folder / "recording.json",
             "sorting_json": ks_folder / "sorting.json",
             "output_folder": ks_folder,
@@ -98,11 +102,11 @@ def build_paths(session_name: str, data_root: Path, db_path: Path | None = None)
         "ks_folder": p0["ks_folder"],
         "alf_folder": p0["alf_folder"],
         "analyzer_folder": p0["analyzer_folder"],
+        "bombcell_folder": p0["bombcell_folder"],
         "shift_path": shift_path,
         "recording_json": p0["recording_json"],
         "sorting_json": p0["sorting_json"],
         "output_folder": p0["output_folder"],
-        "db_path": db_path,
         "present_probes": present_probes,
         "multi_probe": multi_probe,
         "probes": probes,
