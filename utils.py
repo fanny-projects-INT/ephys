@@ -369,3 +369,54 @@ def export_alf(
             print(msg)
 
     return sess
+
+def run_bombcell(
+    sess: dict,
+    stop_on_error: bool = False,
+) -> dict:
+    """
+    Run Bombcell quality control on Kilosort outputs for each probe.
+    Save results in a 'bombcell' folder at the session level.
+    """
+
+    import bombcell as bc
+
+    session = sess["session_name"]
+    probes = sess["probes"]
+
+    print(f"\nBombcell: {session}")
+
+    bombcell_outputs = {}
+
+    for probe, P in probes.items():
+        tag = f"{session} | {probe}"
+
+        try:
+            ks_folder = Path(P["ks_folder"])
+            bombcell_folder = Path(sess["base_folder"]) / "bombcell" / probe
+
+            bombcell_folder.mkdir(parents=True, exist_ok=True)
+
+            print(f"[{tag}] running")
+
+            param = bc.get_default_parameters(ks_folder)
+
+            quality_metrics, param, unit_type, unit_type_string = bc.run_bombcell(
+                ks_folder,
+                bombcell_folder,
+                param,
+            )
+
+            bombcell_outputs[probe] = bombcell_folder
+
+            print(f"[{tag}] done")
+
+        except Exception as e:
+            msg = f"[{tag}] failed: {e}"
+            if stop_on_error:
+                raise
+            print(msg)
+
+    sess["bombcell_folders"] = bombcell_outputs
+
+    return sess

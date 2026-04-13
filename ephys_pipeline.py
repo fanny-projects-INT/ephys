@@ -1,5 +1,5 @@
 from pathlib import Path
-from config import DATA_ROOT, DB_PATH
+from config import *
 from spikeinterface.sorters import get_default_sorter_params
 from functions.paths import build_paths
 from functions.compress import compress_recordings
@@ -7,26 +7,18 @@ from functions.load import load_recordings
 from functions.preprocess import preprocess_recordings
 from functions.sort import run_kilosort4
 from functions.analyzer import build_sorting_analyzers
+from functions.bombcell import run_bombcell
 from functions.alf import export_alf
 
 
+
 # =========================================================
-# CONFIG
+# SESSSIONS TO PROCESS
 # =========================================================
 
 SESSION_LIST = [
     "VF074test_2026_03_24",
 ]
-
-KS_PARAMS = get_default_sorter_params("kilosort4")
-
-COMPRESS_KEEP_ORIGINAL = True
-KS_REMOVE_EXISTING_FOLDER = True
-ANALYZER_N_JOBS = 1
-ANALYZER_CHUNK_DURATION = "1s"
-EXPORT_N_JOBS = 1
-EXPORT_CHUNK_DURATION = "1s"
-
 
 # =========================================================
 # MAIN
@@ -65,7 +57,10 @@ def main():
             chunk_duration=ANALYZER_CHUNK_DURATION,
         )
 
-        # 6) export ALF / IBL GUI
+        # 6) Bombcell QC
+        run_bombcell(sess)
+
+        # 7) export ALF / IBL GUI
         export_alf(
             sess,
             stop_on_error=False,
