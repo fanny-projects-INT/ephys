@@ -6,6 +6,8 @@ import spikeinterface.preprocessing as spre
 from spikeinterface.sorters import run_sorter, get_default_sorter_params
 import spikeinterface.full as si
 from spikeinterface.exporters import export_to_ibl_gui
+import spikeinterface.curation as sc
+
 
 
 def compress_recordings(sess, keep_original=True):
@@ -297,7 +299,9 @@ def build_sorting_analyzers(
                     "templates",
                     "spike_amplitudes",
                     "spike_locations",
+                    "unit_locations",
                     "noise_levels",
+                    "template_metrics",
                     "quality_metrics",
                 ],
                 n_jobs=n_jobs,
@@ -379,12 +383,9 @@ def run_bombcell(
     stop_on_error: bool = False,
 ) -> dict:
     """
-    Run Bombcell quality control on Kilosort outputs for each probe.
-    Save results in a 'bombcell' folder at the session level.
+    Run Bombcell unit labeling from a SortingAnalyzer using SpikeInterface.
+    Save labels for each probe in the bombcell folder.
     """
-
-    import bombcell as bc
-
     session = sess["session_name"]
     probes = sess["probes"]
 
@@ -396,22 +397,29 @@ def run_bombcell(
         tag = f"{session} | {probe}"
 
         try:
-            ks_folder = Path(P["ks_folder"])
-            bombcell_folder = Path(sess["base_folder"]) / "bombcell" / probe
-
+            analyzer_folder = Path(P["analyzer_folder"])
+            bombcell_folder = Path(P["bombcell_folder"])
             bombcell_folder.mkdir(parents=True, exist_ok=True)
 
             print(f"[{tag}] running")
 
-            param = bc.get_default_parameters(ks_folder)
+            sorting_analyzer = si.load_sorting_analyzer(analyzer_folder)
 
-            quality_metrics, param, unit_type, unit_type_string = bc.run_bombcell(
-                ks_folder,
-                bombcell_folder,
-                param,
+            thresholds = sc.bombcell_get_default_thresholds()
+
+            bombcell_labels = sc.bombcell_label_units(
+                sorting_analyzer,
+                thresholds=thresholds,
+                label_non_somatic=True,
+                split_non_somatic_good_mua=True,
             )
 
-            bombcell_outputs[probe] = bombcell_folder
+            bombcell_labels.to_csv(bombcell_folder / "bombcell_labels.csv")
+
+            bombcell_outputs[probe] = {
+                "folder": bombcell_folder,
+                "labels": bombcell_labels,
+            }
 
             print(f"[{tag}] done")
 
@@ -421,6 +429,6 @@ def run_bombcell(
                 raise
             print(msg)
 
-    sess["bombcell_folders"] = bombcell_outputs
+    sess["bombcell_outputs"] = bombcell_outputs
 
     return sess
