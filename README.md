@@ -61,6 +61,7 @@ EXPORT_CHUNK_DURATION = "1s"
 
 Only the Rec/ folder is required at the beginning. All other folders are created automatically.
 
+```
 DATA_ROOT/
 └── Mouse_ID/
     └── YYYY_MM_DD/
@@ -81,6 +82,7 @@ DATA_ROOT/
         │   └── probe00/
         ├── shift.txt
         └── alignment_affine.json
+```
 
 ---
 
