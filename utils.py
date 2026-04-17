@@ -1,13 +1,17 @@
 from pathlib import Path
 import shutil
+import json
+
+import numpy as np
+import pandas as pd
 import spikeglx
+
 from spikeinterface.extractors import read_cbin_ibl
 import spikeinterface.preprocessing as spre
 from spikeinterface.sorters import run_sorter, get_default_sorter_params
 import spikeinterface.full as si
 from spikeinterface.exporters import export_to_ibl_gui
 import spikeinterface.curation as sc
-
 
 
 def compress_recordings(sess, keep_original=True):
@@ -230,7 +234,7 @@ def run_kilosort4(
             P["recording_json"] = recording_json
             P["sorting_json"] = sorting_json
 
-            print(f"    done")
+            print("    done")
 
         except Exception as e:
             print(f"    failed: {e}")
@@ -378,6 +382,7 @@ def export_alf(
 
     return sess
 
+
 def run_bombcell(
     sess: dict,
     stop_on_error: bool = False,
@@ -430,5 +435,302 @@ def run_bombcell(
             print(msg)
 
     sess["bombcell_outputs"] = bombcell_outputs
+    return sess
 
+
+def flatten_array_of_arrays(arr):
+    out = []
+    for x in arr:
+        if isinstance(x, (list, np.ndarray)):
+            out.extend(list(x))
+        elif pd.notna(x):
+            out.append(float(x))
+    return np.array(out, dtype=float)
+
+
+def detect_sync_events(
+    sync,
+    fs,
+    threshold=32,
+    win_s=1.0,
+    min_ones_in_win=2,
+    min_silence_s=1.0,
+    hold_low_s=1.0,
+):
+    """
+    Detect TTL-like sync events from the sync channel.
+    Returns event times in seconds (ephys time base).
+    """
+    binary = (sync > threshold).astype(np.uint8)
+
+    win_n = int(win_s * fs)
+    kernel = np.ones(win_n, dtype=np.int32)
+    count = np.convolve(binary, kernel, mode="same")
+    active = (count >= min_ones_in_win).astype(np.uint8)
+
+    one_idx = np.flatnonzero(binary)
+    rise_times = []
+
+    min_silence_n = int(min_silence_s * fs)
+    hold_low_n = int(hold_low_s * fs)
+
+    state = "inactive"
+    last_end_idx = -999999
+
+    i = 1
+    n = len(sync)
+
+    while i < n:
+        if state == "inactive":
+            if active[i - 1] == 0 and active[i] == 1 and (i - last_end_idx) >= min_silence_n:
+                jpos = np.searchsorted(one_idx, i)
+                if jpos < len(one_idx):
+                    first_one = one_idx[jpos]
+                    rise_times.append(first_one / fs)
+                    state = "active"
+                    i = max(i + 1, first_one + 1)
+                    continue
+        else:
+            if active[i] == 0:
+                low_run = 1
+                k = i + 1
+                while k < n and active[k] == 0 and low_run < hold_low_n:
+                    low_run += 1
+                    k += 1
+                if low_run >= hold_low_n:
+                    last_end_idx = k
+                    state = "inactive"
+                    i = k
+                    continue
+        i += 1
+
+    return np.array(rise_times, dtype=float)
+
+
+def correlate_full(x, y):
+    return np.correlate(x, y, mode="full")
+
+
+def fit_linear(x, y):
+    a, b = np.polyfit(x, y, 1)
+    return float(a), float(b)
+
+
+def compute_and_save_alignment(
+    sess: dict,
+    db_path,
+    mouse_behavior: str | None = None,
+    lf_stream_name: str = "lp",
+    sync_threshold: float = 32,
+    coarse_bin_size: float = 0.1,
+    fine_match_max_diff_s: float = 5.0,
+    save_shift_txt: bool = True,
+    save_affine_json: bool = True,
+) -> dict:
+    """
+    Compute behavior/ephys alignment from LF sync channel and save:
+    - shift.txt : intercept b only
+    - alignment_affine.json : full affine transform t_behavior = a * t_ephys + b
+    """
+    session_name = sess["session_name"]
+    mouse_ephys = sess["mouse"]
+    date = sess["date"]
+    base_folder = Path(sess["base_folder"])
+
+    if mouse_behavior is None:
+        mouse_behavior = mouse_ephys
+
+    shift_path = Path(sess.get("shift_path", base_folder / "shift.txt"))
+    affine_path = base_folder / "alignment_affine.json"
+
+    print(f"\nAlignment: {session_name}")
+
+    date_str = f"{date[:4]}-{date[5:7]}-{date[8:10]}"
+    db_path = Path(db_path)
+
+    if not db_path.exists():
+        raise FileNotFoundError(f"Behavior DB not found: {db_path}")
+
+    df = pd.read_feather(db_path)
+    row = df[(df["Mouse_ID"] == mouse_behavior) & (df["Date"] == date_str)]
+
+    if len(row) == 0:
+        raise ValueError(f"No behavior entry found for {mouse_behavior} / {date_str}")
+
+    row = row.iloc[0]
+
+    bout_starts = np.asarray(row["Bout Start Times"], dtype=float)
+    if len(bout_starts) == 0:
+        raise ValueError("No bout start times found in behavior DB")
+
+    lick_rewarded = flatten_array_of_arrays(row["Times Rewarded Licks"])
+    lick_nonrewarded = flatten_array_of_arrays(row["Times Non Rewarded Licks"])
+    lick_invalid = flatten_array_of_arrays(row["Times Invalid Licks"])
+
+    lick_arrays = [lick_rewarded, lick_nonrewarded, lick_invalid]
+    lick_arrays = [x for x in lick_arrays if len(x) > 0]
+    if len(lick_arrays) > 0:
+        lick_times = np.sort(np.concatenate(lick_arrays))
+    else:
+        lick_times = np.array([], dtype=float)
+
+    sess["behavior"] = {
+        "bout_starts": bout_starts,
+        "lick_rewarded": lick_rewarded,
+        "lick_nonrewarded": lick_nonrewarded,
+        "lick_invalid": lick_invalid,
+        "lick_times": lick_times,
+        "mouse_behavior": mouse_behavior,
+        "date_str": date_str,
+    }
+
+    print(f"  behavior bouts: {len(bout_starts)}")
+
+    alignment_results = {}
+
+    for probe, P in sess["probes"].items():
+        tag = f"{session_name} | {probe}"
+        rec_folder = Path(P["rec_folder"])
+
+        lf_candidates = sorted(rec_folder.glob("*.lf.cbin"))
+        ap_candidates = sorted(rec_folder.glob("*.ap.cbin"))
+
+        if len(lf_candidates) == 0:
+            raise FileNotFoundError(f"[{tag}] No LF cbin file found in {rec_folder}")
+        if len(ap_candidates) == 0:
+            raise FileNotFoundError(f"[{tag}] No AP cbin file found in {rec_folder}")
+
+        lf_cbin_path = lf_candidates[0]
+        ap_cbin_path = ap_candidates[0]
+
+        print(f"[{tag}] loading LF sync from {lf_cbin_path.name}")
+
+        rec_lf = read_cbin_ibl(
+            folder_path=rec_folder,
+            cbin_file_path=lf_cbin_path,
+            load_sync_channel=True,
+            stream_name=lf_stream_name,
+        )
+
+        fs_lf = rec_lf.get_sampling_frequency()
+        sync = rec_lf.get_traces(
+            start_frame=0,
+            end_frame=rec_lf.get_num_frames(),
+        )[:, -1]
+
+        ts_events = detect_sync_events(sync, fs_lf, threshold=sync_threshold)
+
+        print(f"[{tag}] sync events detected: {len(ts_events)}")
+
+        if len(ts_events) == 0:
+            raise ValueError(f"[{tag}] No sync events detected on LF sync channel")
+
+        tmax = int(np.ceil(max(bout_starts[-1], ts_events[-1]) / coarse_bin_size)) + 1
+
+        v_beh = np.zeros(tmax, dtype=float)
+        v_eph = np.zeros(tmax, dtype=float)
+
+        beh_idx = (bout_starts / coarse_bin_size).astype(int)
+        eph_idx = (ts_events / coarse_bin_size).astype(int)
+
+        beh_idx = beh_idx[(beh_idx >= 0) & (beh_idx < tmax)]
+        eph_idx = eph_idx[(eph_idx >= 0) & (eph_idx < tmax)]
+
+        v_beh[beh_idx] = 1
+        v_eph[eph_idx] = 1
+
+        xcorr = correlate_full(v_beh, v_eph)
+        lags = np.arange(-len(v_eph) + 1, len(v_beh))
+        best_lag = lags[np.argmax(xcorr)] * coarse_bin_size
+
+        ts_events_shifted = ts_events + best_lag
+
+        paired_x = []
+        paired_y = []
+
+        for y in bout_starts:
+            diffs = np.abs(ts_events_shifted - y)
+            idx = np.argmin(diffs)
+            if diffs[idx] < fine_match_max_diff_s:
+                paired_x.append(ts_events[idx])
+                paired_y.append(y)
+
+        paired_x = np.array(paired_x, dtype=float)
+        paired_y = np.array(paired_y, dtype=float)
+
+        if len(paired_x) < 3:
+            raise ValueError(f"[{tag}] Not enough matched events for fine alignment")
+
+        a, b = fit_linear(paired_x, paired_y)
+
+        print(f"[{tag}] coarse shift estimate: {best_lag:.3f} s")
+        print(f"[{tag}] fine alignment: t_behavior = {a:.8f} * t_ephys + {b:.8f}")
+        print(f"[{tag}] matched events: {len(paired_x)}")
+
+        probe_shift_path = base_folder / f"{probe}_shift.txt"
+        probe_affine_path = base_folder / f"{probe}_alignment_affine.json"
+
+        if save_shift_txt:
+            probe_shift_path.write_text(f"{b:.8f}\n", encoding="utf-8")
+
+        if save_affine_json:
+            with open(probe_affine_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "session_name": session_name,
+                        "mouse": mouse_ephys,
+                        "mouse_behavior": mouse_behavior,
+                        "date": date,
+                        "probe": probe,
+                        "a": a,
+                        "b": b,
+                        "n_matched_events": int(len(paired_x)),
+                        "coarse_shift_s": float(best_lag),
+                        "lf_cbin_file": str(lf_cbin_path),
+                        "ap_cbin_file": str(ap_cbin_path),
+                        "fs_lf": float(fs_lf),
+                    },
+                    f,
+                    indent=2,
+                )
+
+        alignment_results[probe] = {
+            "a": a,
+            "b": b,
+            "n_matched_events": int(len(paired_x)),
+            "coarse_shift_s": float(best_lag),
+            "lf_cbin_file": str(lf_cbin_path),
+            "ap_cbin_file": str(ap_cbin_path),
+            "probe_shift_path": str(probe_shift_path),
+            "probe_affine_path": str(probe_affine_path),
+        }
+
+    if len(alignment_results) == 1:
+        only_probe = next(iter(alignment_results))
+        res = alignment_results[only_probe]
+
+        if save_shift_txt:
+            shift_path.write_text(f"{res['b']:.8f}\n", encoding="utf-8")
+
+        if save_affine_json:
+            with open(affine_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "session_name": session_name,
+                        "mouse": mouse_ephys,
+                        "mouse_behavior": mouse_behavior,
+                        "date": date,
+                        "probe": only_probe,
+                        "a": res["a"],
+                        "b": res["b"],
+                        "n_matched_events": res["n_matched_events"],
+                        "coarse_shift_s": res["coarse_shift_s"],
+                        "lf_cbin_file": res["lf_cbin_file"],
+                        "ap_cbin_file": res["ap_cbin_file"],
+                    },
+                    f,
+                    indent=2,
+                )
+
+    sess["alignment"] = alignment_results
     return sess

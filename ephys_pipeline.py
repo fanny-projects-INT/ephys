@@ -1,6 +1,7 @@
 from pathlib import Path
 from config import (
     DATA_ROOT,
+    DB_PATH,
     KS_PARAMS,
     COMPRESS_KEEP_ORIGINAL,
     KS_REMOVE_EXISTING_FOLDER,
@@ -18,19 +19,15 @@ from utils import (
     build_sorting_analyzers,
     run_bombcell,
     export_alf,
+    compute_and_save_alignment,
 )
 
-# =========================================================
-# SESSSIONS TO PROCESS
-# =========================================================
 
 SESSION_LIST = [
     "VF074v3_2026_03_24",
 ]
 
-# =========================================================
-# MAIN
-# =========================================================
+
 def main():
     sessions = [
         build_paths(session_name, data_root=DATA_ROOT)
@@ -42,7 +39,10 @@ def main():
         print(f"SESSION: {sess['session_name']}")
         print("=" * 80)
 
-        compress_recordings(sess, keep_original=COMPRESS_KEEP_ORIGINAL)
+        compress_recordings(
+            sess,
+            keep_original=COMPRESS_KEEP_ORIGINAL,
+        )
 
         load_recordings(sess)
 
@@ -67,6 +67,11 @@ def main():
             stop_on_error=False,
             n_jobs=EXPORT_N_JOBS,
             chunk_duration=EXPORT_CHUNK_DURATION,
+        )
+
+        compute_and_save_alignment(
+            sess,
+            db_path=DB_PATH,
         )
 
 
