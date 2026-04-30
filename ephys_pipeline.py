@@ -24,7 +24,7 @@ from utils import (
 
 
 SESSION_LIST = [
-    "VF074v3_2026_03_24",
+    "VF065_2025_12_12",
 ]
 
 

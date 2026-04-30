@@ -14,9 +14,16 @@ from spikeinterface.exporters import export_to_ibl_gui
 import spikeinterface.curation as sc
 
 
-def compress_recordings(sess, keep_original=True):
+from pathlib import Path
+import spikeglx
+
+
+def compress_recordings(sess, keep_original=False):
     """
     Compress Neuropixels .ap.bin and .lf.bin files for each probe.
+
+    keep_original=True  -> keep raw .bin files
+    keep_original=False -> delete raw .bin files after compression
     """
     session = sess["session_name"]
     probes = sess["probes"]
@@ -29,19 +36,27 @@ def compress_recordings(sess, keep_original=True):
             print(f"[{tag}] rec_folder not found")
             continue
 
-        print(f"[{tag}] compressing")
-
         bin_files = list(rec_folder.rglob("*.ap.bin")) + list(rec_folder.rglob("*.lf.bin"))
 
         if len(bin_files) == 0:
             print(f"[{tag}] no .bin files found")
             continue
 
+        print(f"[{tag}] compressing | keep_original={keep_original}")
+
         for f in bin_files:
             try:
-                print(f"[{tag}] {f.name}")
+                print(f"[{tag}] compressing {f.name}")
+
+                # Important: we always ask spikeglx to keep the original.
+                # We control deletion ourselves below, in one clean place.
                 sr = spikeglx.Reader(f)
-                sr.compress_file(keep_original=keep_original)
+                sr.compress_file(keep_original=True)
+
+                if keep_original is False and f.exists():
+                    print(f"[{tag}] deleting raw file: {f.name}")
+                    f.unlink()
+
             except Exception as e:
                 print(f"[{tag}] error on {f.name}: {e}")
 
@@ -524,13 +539,14 @@ def compute_and_save_alignment(
     sync_threshold: float = 32,
     coarse_bin_size: float = 0.1,
     fine_match_max_diff_s: float = 5.0,
-    save_shift_txt: bool = True,
-    save_affine_json: bool = True,
 ) -> dict:
     """
-    Compute behavior/ephys alignment from LF sync channel and save:
-    - shift.txt : intercept b only
-    - alignment_affine.json : full affine transform t_behavior = a * t_ephys + b
+    Compute behavior/ephys alignment from LF sync channel and save one file per probe:
+
+    shift/probe00/alignment_affine.json
+
+    with:
+    t_behavior = a * t_ephys + b
     """
     session_name = sess["session_name"]
     mouse_ephys = sess["mouse"]
@@ -539,9 +555,6 @@ def compute_and_save_alignment(
 
     if mouse_behavior is None:
         mouse_behavior = mouse_ephys
-
-    shift_path = Path(sess.get("shift_path", base_folder / "shift.txt"))
-    affine_path = base_folder / "alignment_affine.json"
 
     print(f"\nAlignment: {session_name}")
 
@@ -569,6 +582,7 @@ def compute_and_save_alignment(
 
     lick_arrays = [lick_rewarded, lick_nonrewarded, lick_invalid]
     lick_arrays = [x for x in lick_arrays if len(x) > 0]
+
     if len(lick_arrays) > 0:
         lick_times = np.sort(np.concatenate(lick_arrays))
     else:
@@ -613,12 +627,17 @@ def compute_and_save_alignment(
         )
 
         fs_lf = rec_lf.get_sampling_frequency()
+
         sync = rec_lf.get_traces(
             start_frame=0,
             end_frame=rec_lf.get_num_frames(),
         )[:, -1]
 
-        ts_events = detect_sync_events(sync, fs_lf, threshold=sync_threshold)
+        ts_events = detect_sync_events(
+            sync,
+            fs_lf,
+            threshold=sync_threshold,
+        )
 
         print(f"[{tag}] sync events detected: {len(ts_events)}")
 
@@ -651,6 +670,7 @@ def compute_and_save_alignment(
         for y in bout_starts:
             diffs = np.abs(ts_events_shifted - y)
             idx = np.argmin(diffs)
+
             if diffs[idx] < fine_match_max_diff_s:
                 paired_x.append(ts_events[idx])
                 paired_y.append(y)
@@ -667,70 +687,45 @@ def compute_and_save_alignment(
         print(f"[{tag}] fine alignment: t_behavior = {a:.8f} * t_ephys + {b:.8f}")
         print(f"[{tag}] matched events: {len(paired_x)}")
 
-        probe_shift_path = base_folder / f"{probe}_shift.txt"
-        probe_affine_path = base_folder / f"{probe}_alignment_affine.json"
+        # New clean structure
+        probe_shift_folder = base_folder / "shift" / probe
+        probe_shift_folder.mkdir(parents=True, exist_ok=True)
 
-        if save_shift_txt:
-            probe_shift_path.write_text(f"{b:.8f}\n", encoding="utf-8")
+        alignment_path = probe_shift_folder / "alignment_affine.json"
 
-        if save_affine_json:
-            with open(probe_affine_path, "w", encoding="utf-8") as f:
-                json.dump(
-                    {
-                        "session_name": session_name,
-                        "mouse": mouse_ephys,
-                        "mouse_behavior": mouse_behavior,
-                        "date": date,
-                        "probe": probe,
-                        "a": a,
-                        "b": b,
-                        "n_matched_events": int(len(paired_x)),
-                        "coarse_shift_s": float(best_lag),
-                        "lf_cbin_file": str(lf_cbin_path),
-                        "ap_cbin_file": str(ap_cbin_path),
-                        "fs_lf": float(fs_lf),
-                    },
-                    f,
-                    indent=2,
-                )
-
-        alignment_results[probe] = {
-            "a": a,
-            "b": b,
+        alignment_data = {
+            "session_name": session_name,
+            "mouse": mouse_ephys,
+            "mouse_behavior": mouse_behavior,
+            "date": date,
+            "probe": probe,
+            "a": float(a),
+            "b": float(b),
+            "formula": "t_behavior = a * t_ephys + b",
             "n_matched_events": int(len(paired_x)),
             "coarse_shift_s": float(best_lag),
             "lf_cbin_file": str(lf_cbin_path),
             "ap_cbin_file": str(ap_cbin_path),
-            "probe_shift_path": str(probe_shift_path),
-            "probe_affine_path": str(probe_affine_path),
+            "fs_lf": float(fs_lf),
+            "lf_stream_name": lf_stream_name,
+            "sync_threshold": float(sync_threshold),
+            "coarse_bin_size": float(coarse_bin_size),
+            "fine_match_max_diff_s": float(fine_match_max_diff_s),
         }
 
-    if len(alignment_results) == 1:
-        only_probe = next(iter(alignment_results))
-        res = alignment_results[only_probe]
+        with open(alignment_path, "w", encoding="utf-8") as f:
+            json.dump(alignment_data, f, indent=2)
 
-        if save_shift_txt:
-            shift_path.write_text(f"{res['b']:.8f}\n", encoding="utf-8")
-
-        if save_affine_json:
-            with open(affine_path, "w", encoding="utf-8") as f:
-                json.dump(
-                    {
-                        "session_name": session_name,
-                        "mouse": mouse_ephys,
-                        "mouse_behavior": mouse_behavior,
-                        "date": date,
-                        "probe": only_probe,
-                        "a": res["a"],
-                        "b": res["b"],
-                        "n_matched_events": res["n_matched_events"],
-                        "coarse_shift_s": res["coarse_shift_s"],
-                        "lf_cbin_file": res["lf_cbin_file"],
-                        "ap_cbin_file": res["ap_cbin_file"],
-                    },
-                    f,
-                    indent=2,
-                )
+        alignment_results[probe] = {
+            "a": float(a),
+            "b": float(b),
+            "n_matched_events": int(len(paired_x)),
+            "coarse_shift_s": float(best_lag),
+            "lf_cbin_file": str(lf_cbin_path),
+            "ap_cbin_file": str(ap_cbin_path),
+            "alignment_path": str(alignment_path),
+        }
 
     sess["alignment"] = alignment_results
+
     return sess
