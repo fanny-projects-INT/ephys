@@ -534,7 +534,6 @@ def fit_linear(x, y):
 def compute_and_save_alignment(
     sess: dict,
     db_path,
-    mouse_behavior: str | None = None,
     lf_stream_name: str = "lp",
     sync_threshold: float = 32,
     coarse_bin_size: float = 0.1,
@@ -542,19 +541,12 @@ def compute_and_save_alignment(
 ) -> dict:
     """
     Compute behavior/ephys alignment from LF sync channel and save one file per probe:
-
     shift/probe00/alignment_affine.json
-
-    with:
-    t_behavior = a * t_ephys + b
     """
     session_name = sess["session_name"]
     mouse_ephys = sess["mouse"]
     date = sess["date"]
     base_folder = Path(sess["base_folder"])
-
-    if mouse_behavior is None:
-        mouse_behavior = mouse_ephys
 
     print(f"\nAlignment: {session_name}")
 
@@ -565,10 +557,10 @@ def compute_and_save_alignment(
         raise FileNotFoundError(f"Behavior DB not found: {db_path}")
 
     df = pd.read_feather(db_path)
-    row = df[(df["Mouse_ID"] == mouse_behavior) & (df["Date"] == date_str)]
+    row = df[(df["Mouse_ID"] == mouse_ephys) & (df["Date"] == date_str)]
 
     if len(row) == 0:
-        raise ValueError(f"No behavior entry found for {mouse_behavior} / {date_str}")
+        raise ValueError(f"No behavior entry found for {mouse_ephys} / {date_str}")
 
     row = row.iloc[0]
 
@@ -594,7 +586,6 @@ def compute_and_save_alignment(
         "lick_nonrewarded": lick_nonrewarded,
         "lick_invalid": lick_invalid,
         "lick_times": lick_times,
-        "mouse_behavior": mouse_behavior,
         "date_str": date_str,
     }
 
@@ -633,11 +624,7 @@ def compute_and_save_alignment(
             end_frame=rec_lf.get_num_frames(),
         )[:, -1]
 
-        ts_events = detect_sync_events(
-            sync,
-            fs_lf,
-            threshold=sync_threshold,
-        )
+        ts_events = detect_sync_events(sync, fs_lf, threshold=sync_threshold)
 
         print(f"[{tag}] sync events detected: {len(ts_events)}")
 
@@ -687,7 +674,6 @@ def compute_and_save_alignment(
         print(f"[{tag}] fine alignment: t_behavior = {a:.8f} * t_ephys + {b:.8f}")
         print(f"[{tag}] matched events: {len(paired_x)}")
 
-        # New clean structure
         probe_shift_folder = base_folder / "shift" / probe
         probe_shift_folder.mkdir(parents=True, exist_ok=True)
 
@@ -696,21 +682,15 @@ def compute_and_save_alignment(
         alignment_data = {
             "session_name": session_name,
             "mouse": mouse_ephys,
-            "mouse_behavior": mouse_behavior,
             "date": date,
             "probe": probe,
             "a": float(a),
             "b": float(b),
-            "formula": "t_behavior = a * t_ephys + b",
             "n_matched_events": int(len(paired_x)),
             "coarse_shift_s": float(best_lag),
             "lf_cbin_file": str(lf_cbin_path),
             "ap_cbin_file": str(ap_cbin_path),
             "fs_lf": float(fs_lf),
-            "lf_stream_name": lf_stream_name,
-            "sync_threshold": float(sync_threshold),
-            "coarse_bin_size": float(coarse_bin_size),
-            "fine_match_max_diff_s": float(fine_match_max_diff_s),
         }
 
         with open(alignment_path, "w", encoding="utf-8") as f:
@@ -721,11 +701,8 @@ def compute_and_save_alignment(
             "b": float(b),
             "n_matched_events": int(len(paired_x)),
             "coarse_shift_s": float(best_lag),
-            "lf_cbin_file": str(lf_cbin_path),
-            "ap_cbin_file": str(ap_cbin_path),
             "alignment_path": str(alignment_path),
         }
 
     sess["alignment"] = alignment_results
-
     return sess
